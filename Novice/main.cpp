@@ -1,6 +1,5 @@
 #include <Novice.h>
 #include <cmath>
-#include <memory>
 
 const char kWindowTitle[] = "学籍番号";
 
@@ -13,198 +12,206 @@ struct Bullet {
 	bool isShot = false;
 };
 
-class Player;
-
-// 自機の状態の基底クラス
-class PlayerState {
-public:
-	virtual ~PlayerState() = default;
-
-	// 状態に入ったときの処理
-	virtual void Enter(Player&) {}
-
-	// 状態ごとの更新処理
-	virtual void Update(Player& player, const char* keys, const char* preKeys) = 0;
-
-	// 状態ごとの描画色を取得
-	virtual unsigned int GetColor() const = 0;
-
-	// 状態名を取得
-	virtual const char* GetName() const = 0;
-};
-
-// 待機状態クラス
-class PlayerIdleState : public PlayerState {
-public:
-	void Update(Player& player, const char* keys, const char* preKeys) override;
-	unsigned int GetColor() const override { return WHITE; }
-	const char* GetName() const override { return "IDLE"; }
-};
-
-// 移動状態クラス
-class PlayerMoveState : public PlayerState {
-public:
-	void Update(Player& player, const char* keys, const char* preKeys) override;
-	unsigned int GetColor() const override { return 0x88FFFFFF; }
-	const char* GetName() const override { return "MOVE"; }
-};
-
-// 攻撃状態クラス
-class PlayerAttackState : public PlayerState {
-public:
-	void Enter(Player& player) override;
-	void Update(Player& player, const char* keys, const char*) override;
-	unsigned int GetColor() const override { return 0xFF8800FF; }
-	const char* GetName() const override { return "ATTACK"; }
-
-private:
-	// 攻撃状態の継続フレーム数
-	int attackTimer_ = 0;
-};
-
 // 自機クラス
 class Player {
-public:
-	Player(Bullet* bullet) : bullet_(bullet) {
-		// 初期状態を「待機」に設定
-		ChangeState(std::make_unique<PlayerIdleState>());
-	}
-
-	// 状態を切り替える
-	void ChangeState(std::unique_ptr<PlayerState> newState) {
-		state_ = std::move(newState);
-		if (state_) {
-			state_->Enter(*this);
-		}
-	}
-
-	// 更新処理
-	void Update(const char* keys, const char* preKeys) {
-		if (state_) {
-			state_->Update(*this, keys, preKeys);
-		}
-	}
-
-	// 描画処理
-	void Draw(int textureHandle) const {
-		unsigned int color = state_ ? state_->GetColor() : WHITE;
-		Novice::DrawSprite(static_cast<int>(x_ - radius_), static_cast<int>(y_ - radius_), textureHandle, radius_ * 2.0f, radius_ * 2.0f, 0.0f, color);
-	}
-
-	// 移動と画面外制限
-	void Move(float dx, float dy) {
-		x_ += dx * speed_;
-		y_ += dy * speed_;
-
-		// 画面外に出ないように制限
-		if (x_ < radius_) {
-			x_ = radius_;
-		}
-		if (x_ > 1280.0f - radius_) {
-			x_ = 1280.0f - radius_;
-		}
-		if (y_ < radius_) {
-			y_ = radius_;
-		}
-		if (y_ > 720.0f - radius_) {
-			y_ = 720.0f - radius_;
-		}
-	}
-
-	// 弾を発射できるか確認
-	bool CanShoot() const { return bullet_ && !bullet_->isShot; }
-
-	// 弾を発射する
-	void Shoot() {
-		if (CanShoot()) {
-			bullet_->isShot = true;
-			bullet_->x = x_;
-			bullet_->y = y_;
-		}
-	}
-
-	// 現在の状態名を取得
-	const char* GetStateName() const { return state_ ? state_->GetName() : "NONE"; }
-
 private:
 	float x_ = 640.0f;
 	float y_ = 600.0f;
 	float radius_ = 20.0f;
 	float speed_ = 6.0f;
-
 	Bullet* bullet_ = nullptr;
-	std::unique_ptr<PlayerState> state_;
+
+public:
+	Player(Bullet* bullet);
+
+	void Init();
+	void Update();
+	void Draw(int textureHandle);
+
+	// メンバ関数（コマンド経由で呼び出す）
+	void MoveUp();
+	void MoveDown();
+	void MoveLeft();
+	void MoveRight();
+	void Shoot();
 };
 
-// 待機状態の更新処理
-void PlayerIdleState::Update(Player& player, const char* keys, const char* preKeys) {
-	// SPACEキーが押されたら攻撃状態へ遷移
-	if (player.CanShoot() && preKeys[DIK_SPACE] == 0 && keys[DIK_SPACE] != 0) {
-		player.ChangeState(std::make_unique<PlayerAttackState>());
-		return;
-	}
+// コマンドの基底クラス（インターフェース）
+class ICommand {
+public:
+	virtual ~ICommand() = default;
+	virtual void Exec(Player& player) = 0;
+};
 
-	// WASDのいずれかが押されたら移動状態へ遷移
-	if (keys[DIK_W] != 0 || keys[DIK_S] != 0 || keys[DIK_A] != 0 || keys[DIK_D] != 0) {
-		player.ChangeState(std::make_unique<PlayerMoveState>());
-		return;
+// 上移動コマンドクラス
+class MoveUpCommand : public ICommand {
+public:
+	void Exec(Player& player) override;
+};
+
+// 下移動コマンドクラス
+class MoveDownCommand : public ICommand {
+public:
+	void Exec(Player& player) override;
+};
+
+// 左移動コマンドクラス
+class MoveLeftCommand : public ICommand {
+public:
+	void Exec(Player& player) override;
+};
+
+// 右移動コマンドクラス
+class MoveRightCommand : public ICommand {
+public:
+	void Exec(Player& player) override;
+};
+
+// 弾発射コマンドクラス
+class ShootCommand : public ICommand {
+public:
+	void Exec(Player& player) override;
+};
+
+// 入力を取りまとめるクラス
+class InputHandler {
+public:
+	~InputHandler();
+
+	ICommand* HandleInput();
+
+	// キーへのコマンド割り当て
+	void AssignMoveUpCommand2PressKeyW();
+	void AssignMoveDownCommand2PressKeyS();
+	void AssignMoveLeftCommand2PressKeyA();
+	void AssignMoveRightCommand2PressKeyD();
+	void AssignShootCommand2PressKeySpace();
+
+private:
+	ICommand* pressKeyW_ = nullptr;
+	ICommand* pressKeyS_ = nullptr;
+	ICommand* pressKeyA_ = nullptr;
+	ICommand* pressKeyD_ = nullptr;
+	ICommand* pressKeySpace_ = nullptr;
+};
+
+// ==================================================
+// Playerクラスの実装
+// ==================================================
+
+Player::Player(Bullet* bullet) : bullet_(bullet) {}
+
+void Player::Init() {
+	x_ = 640.0f;
+	y_ = 600.0f;
+}
+
+void Player::Update() {
+	// 画面外に出ないように制限
+	if (x_ < radius_) {
+		x_ = radius_;
+	}
+	if (x_ > 1280.0f - radius_) {
+		x_ = 1280.0f - radius_;
+	}
+	if (y_ < radius_) {
+		y_ = radius_;
+	}
+	if (y_ > 720.0f - radius_) {
+		y_ = 720.0f - radius_;
 	}
 }
 
-// 移動状態の更新処理
-void PlayerMoveState::Update(Player& player, const char* keys, const char* preKeys) {
-	// SPACEキーが押されたら攻撃状態へ遷移
-	if (player.CanShoot() && preKeys[DIK_SPACE] == 0 && keys[DIK_SPACE] != 0) {
-		player.ChangeState(std::make_unique<PlayerAttackState>());
-		return;
-	}
-
-	// 移動入力の計算（WASD）
-	float dx = 0.0f;
-	float dy = 0.0f;
-	if (keys[DIK_W] != 0) {
-		dy -= 1.0f;
-	}
-	if (keys[DIK_S] != 0) {
-		dy += 1.0f;
-	}
-	if (keys[DIK_A] != 0) {
-		dx -= 1.0f;
-	}
-	if (keys[DIK_D] != 0) {
-		dx += 1.0f;
-	}
-
-	// 入力がなくなったら待機状態へ遷移
-	if (dx == 0.0f && dy == 0.0f) {
-		player.ChangeState(std::make_unique<PlayerIdleState>());
-		return;
-	}
-
-	// 自機の移動を実行
-	player.Move(dx, dy);
+void Player::Draw(int textureHandle) {
+	// 自機の描画（白色）
+	Novice::DrawSprite(static_cast<int>(x_ - radius_), static_cast<int>(y_ - radius_), textureHandle, radius_ * 2.0f, radius_ * 2.0f, 0.0f, WHITE);
 }
 
-// 攻撃状態の開始処理
-void PlayerAttackState::Enter(Player& player) {
-	attackTimer_ = 10;
-	player.Shoot();
+void Player::MoveUp() { y_ -= speed_; }
+
+void Player::MoveDown() { y_ += speed_; }
+
+void Player::MoveLeft() { x_ -= speed_; }
+
+void Player::MoveRight() { x_ += speed_; }
+
+void Player::Shoot() {
+	if (bullet_ && !bullet_->isShot) {
+		bullet_->isShot = true;
+		bullet_->x = x_;
+		bullet_->y = y_;
+	}
 }
 
-// 攻撃状態の更新処理
-void PlayerAttackState::Update(Player& player, const char* keys, const char*) {
-	// 攻撃硬直タイマーを減らす
-	attackTimer_--;
+// ==================================================
+// Commandクラスの実装
+// ==================================================
 
-	// 攻撃時間が終了したら次の状態へ遷移
-	if (attackTimer_ <= 0) {
-		if (keys[DIK_W] != 0 || keys[DIK_S] != 0 || keys[DIK_A] != 0 || keys[DIK_D] != 0) {
-			player.ChangeState(std::make_unique<PlayerMoveState>());
-		} else {
-			player.ChangeState(std::make_unique<PlayerIdleState>());
-		}
-		return;
+void MoveUpCommand::Exec(Player& player) { player.MoveUp(); }
+
+void MoveDownCommand::Exec(Player& player) { player.MoveDown(); }
+
+void MoveLeftCommand::Exec(Player& player) { player.MoveLeft(); }
+
+void MoveRightCommand::Exec(Player& player) { player.MoveRight(); }
+
+void ShootCommand::Exec(Player& player) { player.Shoot(); }
+
+// ==================================================
+// InputHandlerクラスの実装
+// ==================================================
+
+InputHandler::~InputHandler() {
+	delete pressKeyW_;
+	delete pressKeyS_;
+	delete pressKeyA_;
+	delete pressKeyD_;
+	delete pressKeySpace_;
+}
+
+void InputHandler::AssignMoveUpCommand2PressKeyW() {
+	ICommand* command = new MoveUpCommand();
+	pressKeyW_ = command;
+}
+
+void InputHandler::AssignMoveDownCommand2PressKeyS() {
+	ICommand* command = new MoveDownCommand();
+	pressKeyS_ = command;
+}
+
+void InputHandler::AssignMoveLeftCommand2PressKeyA() {
+	ICommand* command = new MoveLeftCommand();
+	pressKeyA_ = command;
+}
+
+void InputHandler::AssignMoveRightCommand2PressKeyD() {
+	ICommand* command = new MoveRightCommand();
+	pressKeyD_ = command;
+}
+
+void InputHandler::AssignShootCommand2PressKeySpace() {
+	ICommand* command = new ShootCommand();
+	pressKeySpace_ = command;
+}
+
+ICommand* InputHandler::HandleInput() {
+	if (Novice::CheckHitKey(DIK_SPACE)) {
+		return pressKeySpace_;
 	}
+	if (Novice::CheckHitKey(DIK_W)) {
+		return pressKeyW_;
+	}
+	if (Novice::CheckHitKey(DIK_S)) {
+		return pressKeyS_;
+	}
+	if (Novice::CheckHitKey(DIK_A)) {
+		return pressKeyA_;
+	}
+	if (Novice::CheckHitKey(DIK_D)) {
+		return pressKeyD_;
+	}
+
+	return nullptr;
 }
 
 // Windowsアプリでのエントリーポイント(main関数)
@@ -224,8 +231,20 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// 弾の変数
 	Bullet bullet;
 
-	// 自機の生成
-	Player player(&bullet);
+	// 入力ハンドラの生成とコマンドの割り当て
+	InputHandler* inputHandler = new InputHandler();
+	inputHandler->AssignMoveUpCommand2PressKeyW();
+	inputHandler->AssignMoveDownCommand2PressKeyS();
+	inputHandler->AssignMoveLeftCommand2PressKeyA();
+	inputHandler->AssignMoveRightCommand2PressKeyD();
+	inputHandler->AssignShootCommand2PressKeySpace();
+
+	// 実行するコマンドのポインタ
+	ICommand* iCommand = nullptr;
+
+	// 自機の生成と初期化
+	Player* player = new Player(&bullet);
+	player->Init();
 
 	// 敵の変数
 	float enemyX = 640.0f;
@@ -247,8 +266,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
+		// 入力からコマンドを取得
+		iCommand = inputHandler->HandleInput();
+
+		// コマンドがある場合は対象コマンドを実行
+		if (iCommand) {
+			iCommand->Exec(*player);
+		}
+
 		// 自機の更新処理
-		player.Update(keys, preKeys);
+		player->Update();
 
 		// 弾の移動処理
 		if (bullet.isShot) {
@@ -304,12 +331,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			    static_cast<int>(bullet.x - bullet.radius), static_cast<int>(bullet.y - bullet.radius), whiteTextureHandle, bullet.radius * 2.0f, bullet.radius * 2.0f, 0.0f, 0xFFFF00FF);
 		}
 
-		// 自機の描画
-		player.Draw(whiteTextureHandle);
+		// 自機の描画（白色）
+		player->Draw(whiteTextureHandle);
 
-		// 操作説明と現在の状態の描画
+		// 操作説明の描画
 		Novice::ScreenPrintf(20, 20, "WASD: Move / SPACE: Shot / R: Respawn Enemy");
-		Novice::ScreenPrintf(20, 40, "Player State: %s", player.GetStateName());
 
 		///
 		/// ↑描画処理ここまで
@@ -323,6 +349,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			break;
 		}
 	}
+
+	// 解放処理
+	delete player;
+	delete inputHandler;
 
 	// ライブラリの終了
 	Novice::Finalize();
