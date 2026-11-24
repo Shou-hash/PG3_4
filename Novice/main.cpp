@@ -70,6 +70,7 @@ public:
 	void Move(int x, int y);
 	void SelectUnit();
 	void ClearSelectedUnit();
+	bool IsOverlapUnit(const Unit* targetUnit) const;
 
 	// Getter / Setter
 	int GetSelectMode() const { return selectMode_; }
@@ -225,6 +226,11 @@ void Unit::Move(int x, int y) {
 }
 
 void Unit::MoveEnd(Selector* selector) {
+	// 他の確定済みユニットと被っている場合は確定しない
+	if (selector && selector->IsOverlapUnit(this)) {
+		return;
+	}
+
 	isSelected_ = false;
 	if (selector) {
 		// セレクタの位置を移動後のユニットに合わせる
@@ -265,9 +271,16 @@ void Selector::Update() {
 }
 
 void Selector::Draw() {
-	// ユニットの描画
+	// 確定済み（未選択）ユニットの描画
 	for (int i = 0; i < kUnitNum; i++) {
-		unit_[i].Draw();
+		if (!unit_[i].GetIsSelected()) {
+			unit_[i].Draw();
+		}
+	}
+
+	// 未確定（選択中）ユニットの描画
+	if (selectedUnit_) {
+		selectedUnit_->Draw();
 	}
 
 	// セレクタモード中は赤枠を描画
@@ -308,6 +321,18 @@ void Selector::SelectUnit() {
 }
 
 void Selector::ClearSelectedUnit() { selectedUnit_ = nullptr; }
+
+bool Selector::IsOverlapUnit(const Unit* targetUnit) const {
+	if (!targetUnit) {
+		return false;
+	}
+	for (int i = 0; i < kUnitNum; i++) {
+		if (&unit_[i] != targetUnit && unit_[i].GetMapX() == targetUnit->GetMapX() && unit_[i].GetMapY() == targetUnit->GetMapY()) {
+			return true;
+		}
+	}
+	return false;
+}
 
 // ==================================================
 // SelectorCommandクラスの実装
@@ -472,7 +497,7 @@ void StageScene::Update() {
 	if (command_) {
 		command_->Exec();
 
-		// ユニット移動コマンドのみUndo履歴に保存（最大10回）
+		// ユニット移動コマンドのみUndo履歴に保存（無上限）
 		if (dynamic_cast<UnitMoveCommand*>(command_) != nullptr) {
 			// Undo後に新しい移動を行った場合、それ以降の履歴を削除
 			while (commandHistoryItr_ != commandHistory_.end()) {
@@ -482,16 +507,9 @@ void StageScene::Update() {
 
 			commandHistory_.push_back(command_);
 			commandHistoryItr_ = commandHistory_.end();
-
-			// 履歴が10件を超えたら古いものから削除
-			if (commandHistory_.size() > 10) {
-				delete commandHistory_.front();
-				commandHistory_.pop_front();
-				commandHistoryItr_ = commandHistory_.end();
-			}
 		} else {
 			// 選択開始や移動終了時は履歴をリセット
-			if (dynamic_cast<UnitMoveEndCommand*>(command_) != nullptr) {
+			if (dynamic_cast<UnitMoveEndCommand*>(command_) != nullptr && selector_->GetSelectMode() == SELECTOR) {
 				ClearCommandHistory();
 			}
 			delete command_;
@@ -517,6 +535,9 @@ void StageScene::Draw() {
 
 	// セレクタとユニットの描画
 	selector_->Draw();
+
+	// 文字背景の黒いバーの描画
+	Novice::DrawBox(0, 660, 1280, 60, 0.0f, BLACK, kFillModeSolid);
 
 	// モードごとの操作説明とUndo回数の描画
 	if (selector_->GetSelectMode() == SELECTOR) {
@@ -565,7 +586,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↑描画処理ここまで
 		///
-
 
 		// フレームの終了
 		Novice::EndFrame();
