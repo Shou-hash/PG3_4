@@ -1,218 +1,535 @@
 #include <Novice.h>
-#include <cmath>
+#include <iterator>
+#include <list>
 
 const char kWindowTitle[] = "学籍番号";
 
-// 弾の構造体
-struct Bullet {
-	float x = 0.0f;
-	float y = 0.0f;
-	float radius = 8.0f;
-	float speed = 12.0f;
-	bool isShot = false;
+// 選択モード
+enum SelectMode {
+	SELECTOR,
+	UNIT,
 };
 
-// 自機クラス
-class Player {
+class Selector;
+
+// ==================================================
+// Unitクラス
+// ==================================================
+class Unit {
 private:
-	float x_ = 640.0f;
-	float y_ = 600.0f;
-	float radius_ = 20.0f;
-	float speed_ = 6.0f;
-	Bullet* bullet_ = nullptr;
+	int mapX_ = 0;
+	int mapY_ = 0;
+	int mapSize_ = 32;
+	int id_ = 0;
+	bool isSelected_ = false;
 
 public:
-	Player(Bullet* bullet);
+	Unit() = default;
+	void Init(int idref);
+	void Update();
+	void Draw();
+
+	void Move(int x, int y);
+	void MoveEnd(Selector* selector);
+
+	// Getter / Setter
+	int GetMapX() const { return mapX_; }
+	int GetMapY() const { return mapY_; }
+	void SetMapPos(int x, int y) {
+		mapX_ = x;
+		mapY_ = y;
+	}
+	bool GetIsSelected() const { return isSelected_; }
+	void SetIsSelected(bool isSelected) { isSelected_ = isSelected; }
+};
+
+// ==================================================
+// Selectorクラス
+// ==================================================
+class Selector {
+private:
+	int mapX_ = 0;
+	int mapY_ = 0;
+	int mapSize_ = 32;
+
+	int selectMode_ = SELECTOR;
+
+	Unit* unit_ = nullptr;
+	Unit* selectedUnit_ = nullptr;
+
+public:
+	static const int kUnitNum = 4;
+
+	Selector();
+	~Selector();
 
 	void Init();
 	void Update();
-	void Draw(int textureHandle);
+	void Draw();
 
-	// メンバ関数（コマンド経由で呼び出す）
-	void MoveUp();
-	void MoveDown();
-	void MoveLeft();
-	void MoveRight();
-	void Shoot();
+	void Move(int x, int y);
+	void SelectUnit();
+	void ClearSelectedUnit();
+
+	// Getter / Setter
+	int GetSelectMode() const { return selectMode_; }
+	void SetSelectMode(int mode) { selectMode_ = mode; }
+	Unit* GetSelectedUnitAddress() const { return selectedUnit_; }
+	int GetMapX() const { return mapX_; }
+	int GetMapY() const { return mapY_; }
+	void SetMapPos(int x, int y) {
+		mapX_ = x;
+		mapY_ = y;
+	}
 };
 
-// コマンドの基底クラス（インターフェース）
-class ICommand {
+// ==================================================
+// コマンド基底クラス（インターフェース）
+// ==================================================
+class IStageSceneCommand {
 public:
-	virtual ~ICommand() = default;
-	virtual void Exec(Player& player) = 0;
+	virtual ~IStageSceneCommand() = default;
+	virtual void Exec() = 0;
+	virtual void Undo() {}
 };
 
-// 上移動コマンドクラス
-class MoveUpCommand : public ICommand {
+// ==================================================
+// SelectorCommandクラス群
+// ==================================================
+class SelectorMoveCommand : public IStageSceneCommand {
 public:
-	void Exec(Player& player) override;
-};
-
-// 下移動コマンドクラス
-class MoveDownCommand : public ICommand {
-public:
-	void Exec(Player& player) override;
-};
-
-// 左移動コマンドクラス
-class MoveLeftCommand : public ICommand {
-public:
-	void Exec(Player& player) override;
-};
-
-// 右移動コマンドクラス
-class MoveRightCommand : public ICommand {
-public:
-	void Exec(Player& player) override;
-};
-
-// 弾発射コマンドクラス
-class ShootCommand : public ICommand {
-public:
-	void Exec(Player& player) override;
-};
-
-// 入力を取りまとめるクラス
-class InputHandler {
-public:
-	~InputHandler();
-
-	ICommand* HandleInput();
-
-	// キーへのコマンド割り当て
-	void AssignMoveUpCommand2PressKeyW();
-	void AssignMoveDownCommand2PressKeyS();
-	void AssignMoveLeftCommand2PressKeyA();
-	void AssignMoveRightCommand2PressKeyD();
-	void AssignShootCommand2PressKeySpace();
+	SelectorMoveCommand(Selector* selector, int x, int y);
+	void Exec() override;
 
 private:
-	ICommand* pressKeyW_ = nullptr;
-	ICommand* pressKeyS_ = nullptr;
-	ICommand* pressKeyA_ = nullptr;
-	ICommand* pressKeyD_ = nullptr;
-	ICommand* pressKeySpace_ = nullptr;
+	Selector* selector_ = nullptr;
+	int x_ = 0;
+	int y_ = 0;
+};
+
+class SelectUnitCommand : public IStageSceneCommand {
+public:
+	SelectUnitCommand(Selector* selector);
+	void Exec() override;
+
+private:
+	Selector* selector_ = nullptr;
 };
 
 // ==================================================
-// Playerクラスの実装
+// UnitCommandクラス群
 // ==================================================
+class UnitMoveCommand : public IStageSceneCommand {
+public:
+	UnitMoveCommand(Unit* unit, int x, int y);
+	void Exec() override;
+	void Undo() override;
 
-Player::Player(Bullet* bullet) : bullet_(bullet) {}
+private:
+	Unit* unit_ = nullptr;
+	int x_ = 0;
+	int y_ = 0;
+};
 
-void Player::Init() {
-	x_ = 640.0f;
-	y_ = 600.0f;
+class UnitMoveEndCommand : public IStageSceneCommand {
+public:
+	UnitMoveEndCommand(Unit* unit, Selector* selector);
+	void Exec() override;
+
+private:
+	Unit* unit_ = nullptr;
+	Selector* selector_ = nullptr;
+};
+
+// ==================================================
+// StageSceneInputHandlerクラス
+// ==================================================
+class StageSceneInputHandler {
+private:
+	char keys_[256] = {0};
+	char preKeys_[256] = {0};
+
+	Selector* selector_ = nullptr;
+	Unit* selectedUnit_ = nullptr;
+
+public:
+	StageSceneInputHandler(Selector* selector = nullptr);
+	void UpdateKeyState();
+
+	IStageSceneCommand* SelectorHandleInput(Selector* selector);
+	IStageSceneCommand* UnitHandleInput(Unit* unit);
+
+	bool CheckUndoStatus();
+	bool IsTriggerEscape() const { return preKeys_[DIK_ESCAPE] == 0 && keys_[DIK_ESCAPE] != 0; }
+};
+
+// ==================================================
+// StageSceneクラス
+// ==================================================
+class StageScene {
+private:
+	StageSceneInputHandler* inputHandler_ = nullptr;
+	IStageSceneCommand* command_ = nullptr;
+	std::list<IStageSceneCommand*> commandHistory_;
+	std::list<IStageSceneCommand*>::iterator commandHistoryItr_;
+
+	Selector* selector_ = nullptr;
+
+	// コマンド履歴の全削除
+	void ClearCommandHistory();
+
+public:
+	StageScene();
+	~StageScene();
+
+	void Init();
+	void Update();
+	void Draw();
+
+	bool IsEnd() const;
+};
+
+// ==================================================
+// Unitクラスの実装
+// ==================================================
+void Unit::Init(int idref) {
+	id_ = idref;
+	isSelected_ = false;
 }
 
-void Player::Update() {
+void Unit::Update() {}
+
+void Unit::Draw() {
+	// 選択中はピンク色、未選択時は白色で描画
+	unsigned int color = isSelected_ ? 0xFF9999FF : WHITE;
+	Novice::DrawBox(mapX_ * mapSize_ + 1, mapY_ * mapSize_ + 1, mapSize_ - 1, mapSize_ - 1, 0.0f, color, kFillModeSolid);
+}
+
+void Unit::Move(int x, int y) {
+	mapX_ += x;
+	mapY_ += y;
+
 	// 画面外に出ないように制限
-	if (x_ < radius_) {
-		x_ = radius_;
+	if (mapX_ < 0) {
+		mapX_ = 0;
 	}
-	if (x_ > 1280.0f - radius_) {
-		x_ = 1280.0f - radius_;
+	if (mapX_ > 39) {
+		mapX_ = 39;
 	}
-	if (y_ < radius_) {
-		y_ = radius_;
+	if (mapY_ < 0) {
+		mapY_ = 0;
 	}
-	if (y_ > 720.0f - radius_) {
-		y_ = 720.0f - radius_;
+	if (mapY_ > 20) {
+		mapY_ = 20;
 	}
 }
 
-void Player::Draw(int textureHandle) {
-	// 自機の描画（白色）
-	Novice::DrawSprite(static_cast<int>(x_ - radius_), static_cast<int>(y_ - radius_), textureHandle, radius_ * 2.0f, radius_ * 2.0f, 0.0f, WHITE);
-}
-
-void Player::MoveUp() { y_ -= speed_; }
-
-void Player::MoveDown() { y_ += speed_; }
-
-void Player::MoveLeft() { x_ -= speed_; }
-
-void Player::MoveRight() { x_ += speed_; }
-
-void Player::Shoot() {
-	if (bullet_ && !bullet_->isShot) {
-		bullet_->isShot = true;
-		bullet_->x = x_;
-		bullet_->y = y_;
+void Unit::MoveEnd(Selector* selector) {
+	isSelected_ = false;
+	if (selector) {
+		// セレクタの位置を移動後のユニットに合わせる
+		selector->SetMapPos(mapX_, mapY_);
+		selector->ClearSelectedUnit();
+		selector->SetSelectMode(SELECTOR);
 	}
 }
 
 // ==================================================
-// Commandクラスの実装
+// Selectorクラスの実装
 // ==================================================
+Selector::Selector() { unit_ = new Unit[kUnitNum]; }
 
-void MoveUpCommand::Exec(Player& player) { player.MoveUp(); }
+Selector::~Selector() { delete[] unit_; }
 
-void MoveDownCommand::Exec(Player& player) { player.MoveDown(); }
+void Selector::Init() {
+	mapX_ = 14;
+	mapY_ = 14;
+	selectMode_ = SELECTOR;
+	selectedUnit_ = nullptr;
 
-void MoveLeftCommand::Exec(Player& player) { player.MoveLeft(); }
+	for (int i = 0; i < kUnitNum; i++) {
+		unit_[i].Init(i);
+	}
 
-void MoveRightCommand::Exec(Player& player) { player.MoveRight(); }
+	// 各ユニットの初期座標を設定
+	unit_[0].SetMapPos(14, 14);
+	unit_[1].SetMapPos(18, 4);
+	unit_[2].SetMapPos(23, 6);
+	unit_[3].SetMapPos(13, 17);
+}
 
-void ShootCommand::Exec(Player& player) { player.Shoot(); }
+void Selector::Update() {
+	for (int i = 0; i < kUnitNum; i++) {
+		unit_[i].Update();
+	}
+}
+
+void Selector::Draw() {
+	// ユニットの描画
+	for (int i = 0; i < kUnitNum; i++) {
+		unit_[i].Draw();
+	}
+
+	// セレクタモード中は赤枠を描画
+	if (selectMode_ == SELECTOR) {
+		Novice::DrawBox(mapX_ * mapSize_, mapY_ * mapSize_, mapSize_, mapSize_, 0.0f, RED, kFillModeWireFrame);
+		Novice::DrawBox(mapX_ * mapSize_ + 1, mapY_ * mapSize_ + 1, mapSize_ - 2, mapSize_ - 2, 0.0f, RED, kFillModeWireFrame);
+	}
+}
+
+void Selector::Move(int x, int y) {
+	mapX_ += x;
+	mapY_ += y;
+
+	// 画面外に出ないように制限
+	if (mapX_ < 0) {
+		mapX_ = 0;
+	}
+	if (mapX_ > 39) {
+		mapX_ = 39;
+	}
+	if (mapY_ < 0) {
+		mapY_ = 0;
+	}
+	if (mapY_ > 20) {
+		mapY_ = 20;
+	}
+}
+
+void Selector::SelectUnit() {
+	for (int i = 0; i < kUnitNum; i++) {
+		if (unit_[i].GetMapX() == mapX_ && unit_[i].GetMapY() == mapY_) {
+			selectedUnit_ = &unit_[i];
+			selectedUnit_->SetIsSelected(true);
+			selectMode_ = UNIT;
+			break;
+		}
+	}
+}
+
+void Selector::ClearSelectedUnit() { selectedUnit_ = nullptr; }
 
 // ==================================================
-// InputHandlerクラスの実装
+// SelectorCommandクラスの実装
 // ==================================================
+SelectorMoveCommand::SelectorMoveCommand(Selector* selector, int x, int y) : selector_(selector), x_(x), y_(y) {}
 
-InputHandler::~InputHandler() {
-	delete pressKeyW_;
-	delete pressKeyS_;
-	delete pressKeyA_;
-	delete pressKeyD_;
-	delete pressKeySpace_;
-}
-
-void InputHandler::AssignMoveUpCommand2PressKeyW() {
-	ICommand* command = new MoveUpCommand();
-	pressKeyW_ = command;
-}
-
-void InputHandler::AssignMoveDownCommand2PressKeyS() {
-	ICommand* command = new MoveDownCommand();
-	pressKeyS_ = command;
-}
-
-void InputHandler::AssignMoveLeftCommand2PressKeyA() {
-	ICommand* command = new MoveLeftCommand();
-	pressKeyA_ = command;
-}
-
-void InputHandler::AssignMoveRightCommand2PressKeyD() {
-	ICommand* command = new MoveRightCommand();
-	pressKeyD_ = command;
-}
-
-void InputHandler::AssignShootCommand2PressKeySpace() {
-	ICommand* command = new ShootCommand();
-	pressKeySpace_ = command;
-}
-
-ICommand* InputHandler::HandleInput() {
-	if (Novice::CheckHitKey(DIK_SPACE)) {
-		return pressKeySpace_;
+void SelectorMoveCommand::Exec() {
+	if (selector_) {
+		selector_->Move(x_, y_);
 	}
-	if (Novice::CheckHitKey(DIK_W)) {
-		return pressKeyW_;
+}
+
+SelectUnitCommand::SelectUnitCommand(Selector* selector) : selector_(selector) {}
+
+void SelectUnitCommand::Exec() {
+	if (selector_) {
+		selector_->SelectUnit();
 	}
-	if (Novice::CheckHitKey(DIK_S)) {
-		return pressKeyS_;
+}
+
+// ==================================================
+// UnitCommandクラスの実装
+// ==================================================
+UnitMoveCommand::UnitMoveCommand(Unit* unit, int x, int y) : unit_(unit), x_(x), y_(y) {}
+
+void UnitMoveCommand::Exec() {
+	if (unit_) {
+		unit_->Move(x_, y_);
 	}
-	if (Novice::CheckHitKey(DIK_A)) {
-		return pressKeyA_;
+}
+
+void UnitMoveCommand::Undo() {
+	if (unit_) {
+		unit_->Move(-x_, -y_);
 	}
-	if (Novice::CheckHitKey(DIK_D)) {
-		return pressKeyD_;
+}
+
+UnitMoveEndCommand::UnitMoveEndCommand(Unit* unit, Selector* selector) : unit_(unit), selector_(selector) {}
+
+void UnitMoveEndCommand::Exec() {
+	if (unit_) {
+		unit_->MoveEnd(selector_);
+	}
+}
+
+// ==================================================
+// StageSceneInputHandlerクラスの実装
+// ==================================================
+StageSceneInputHandler::StageSceneInputHandler(Selector* selector) : selector_(selector) {}
+
+void StageSceneInputHandler::UpdateKeyState() {
+	memcpy(preKeys_, keys_, 256);
+	Novice::GetHitKeyStateAll(keys_);
+}
+
+IStageSceneCommand* StageSceneInputHandler::SelectorHandleInput(Selector* selector) {
+	selector_ = selector;
+
+	// SPACEキーでユニット選択
+	if (preKeys_[DIK_SPACE] == 0 && keys_[DIK_SPACE] != 0) {
+		return new SelectUnitCommand(selector);
+	}
+
+	// WASDまたは矢印キーでセレクタ移動
+	if ((preKeys_[DIK_W] == 0 && keys_[DIK_W] != 0) || (preKeys_[DIK_UP] == 0 && keys_[DIK_UP] != 0)) {
+		return new SelectorMoveCommand(selector, 0, -1);
+	}
+	if ((preKeys_[DIK_S] == 0 && keys_[DIK_S] != 0) || (preKeys_[DIK_DOWN] == 0 && keys_[DIK_DOWN] != 0)) {
+		return new SelectorMoveCommand(selector, 0, 1);
+	}
+	if ((preKeys_[DIK_A] == 0 && keys_[DIK_A] != 0) || (preKeys_[DIK_LEFT] == 0 && keys_[DIK_LEFT] != 0)) {
+		return new SelectorMoveCommand(selector, -1, 0);
+	}
+	if ((preKeys_[DIK_D] == 0 && keys_[DIK_D] != 0) || (preKeys_[DIK_RIGHT] == 0 && keys_[DIK_RIGHT] != 0)) {
+		return new SelectorMoveCommand(selector, 1, 0);
 	}
 
 	return nullptr;
 }
+
+IStageSceneCommand* StageSceneInputHandler::UnitHandleInput(Unit* unit) {
+	selectedUnit_ = unit;
+
+	// SPACEキーでユニット移動終了（セレクタモードへ戻る）
+	if (preKeys_[DIK_SPACE] == 0 && keys_[DIK_SPACE] != 0) {
+		return new UnitMoveEndCommand(unit, selector_);
+	}
+
+	// WASDまたは矢印キーでユニット移動
+	if ((preKeys_[DIK_W] == 0 && keys_[DIK_W] != 0) || (preKeys_[DIK_UP] == 0 && keys_[DIK_UP] != 0)) {
+		return new UnitMoveCommand(unit, 0, -1);
+	}
+	if ((preKeys_[DIK_S] == 0 && keys_[DIK_S] != 0) || (preKeys_[DIK_DOWN] == 0 && keys_[DIK_DOWN] != 0)) {
+		return new UnitMoveCommand(unit, 0, 1);
+	}
+	if ((preKeys_[DIK_A] == 0 && keys_[DIK_A] != 0) || (preKeys_[DIK_LEFT] == 0 && keys_[DIK_LEFT] != 0)) {
+		return new UnitMoveCommand(unit, -1, 0);
+	}
+	if ((preKeys_[DIK_D] == 0 && keys_[DIK_D] != 0) || (preKeys_[DIK_RIGHT] == 0 && keys_[DIK_RIGHT] != 0)) {
+		return new UnitMoveCommand(unit, 1, 0);
+	}
+
+	return nullptr;
+}
+
+bool StageSceneInputHandler::CheckUndoStatus() {
+	// Ctrl + Z が押されたか判定
+	bool isCtrlPressed = (keys_[DIK_LCONTROL] != 0 || keys_[DIK_RCONTROL] != 0);
+	bool isZTriggered = (preKeys_[DIK_Z] == 0 && keys_[DIK_Z] != 0);
+	return isCtrlPressed && isZTriggered;
+}
+
+// ==================================================
+// StageSceneクラスの実装
+// ==================================================
+StageScene::StageScene() {
+	selector_ = new Selector();
+	inputHandler_ = new StageSceneInputHandler(selector_);
+	commandHistoryItr_ = commandHistory_.end();
+}
+
+StageScene::~StageScene() {
+	ClearCommandHistory();
+	delete inputHandler_;
+	delete selector_;
+}
+
+void StageScene::ClearCommandHistory() {
+	for (auto* cmd : commandHistory_) {
+		delete cmd;
+	}
+	commandHistory_.clear();
+	commandHistoryItr_ = commandHistory_.end();
+}
+
+void StageScene::Init() {
+	selector_->Init();
+	ClearCommandHistory();
+}
+
+void StageScene::Update() {
+	// 入力処理
+	inputHandler_->UpdateKeyState();
+
+	// モードに応じたコマンドを取得
+	if (selector_->GetSelectMode() == SELECTOR) {
+		command_ = inputHandler_->SelectorHandleInput(selector_);
+	} else if (selector_->GetSelectMode() == UNIT) {
+		// Undo入力のチェック
+		if (inputHandler_->CheckUndoStatus()) {
+			if (commandHistoryItr_ != commandHistory_.begin()) {
+				commandHistoryItr_--;
+				(*commandHistoryItr_)->Undo();
+			}
+			command_ = nullptr;
+			return;
+		}
+		command_ = inputHandler_->UnitHandleInput(selector_->GetSelectedUnitAddress());
+	}
+
+	// コマンドの実行と履歴管理
+	if (command_) {
+		command_->Exec();
+
+		// ユニット移動コマンドのみUndo履歴に保存（最大10回）
+		if (dynamic_cast<UnitMoveCommand*>(command_) != nullptr) {
+			// Undo後に新しい移動を行った場合、それ以降の履歴を削除
+			while (commandHistoryItr_ != commandHistory_.end()) {
+				delete *commandHistoryItr_;
+				commandHistoryItr_ = commandHistory_.erase(commandHistoryItr_);
+			}
+
+			commandHistory_.push_back(command_);
+			commandHistoryItr_ = commandHistory_.end();
+
+			// 履歴が10件を超えたら古いものから削除
+			if (commandHistory_.size() > 10) {
+				delete commandHistory_.front();
+				commandHistory_.pop_front();
+				commandHistoryItr_ = commandHistory_.end();
+			}
+		} else {
+			// 選択開始や移動終了時は履歴をリセット
+			if (dynamic_cast<UnitMoveEndCommand*>(command_) != nullptr) {
+				ClearCommandHistory();
+			}
+			delete command_;
+		}
+		command_ = nullptr;
+	}
+
+	selector_->Update();
+}
+
+void StageScene::Draw() {
+	// 背景の描画（青色）
+	Novice::DrawBox(0, 0, 1280, 720, 0.0f, 0x4A7EC0FF, kFillModeSolid);
+
+	// グリッド線の描画（32x32マス）
+	const int kGridSize = 32;
+	for (int x = 0; x <= 1280; x += kGridSize) {
+		Novice::DrawLine(x, 0, x, 720, WHITE);
+	}
+	for (int y = 0; y <= 720; y += kGridSize) {
+		Novice::DrawLine(0, y, 1280, y, WHITE);
+	}
+
+	// セレクタとユニットの描画
+	selector_->Draw();
+
+	// モードごとの操作説明とUndo回数の描画
+	if (selector_->GetSelectMode() == SELECTOR) {
+		Novice::ScreenPrintf(20, 670, "WASD||arrow keys: move / space key: change unit mode");
+		Novice::ScreenPrintf(20, 690, "In Selector Mode, you cannot use the 'Undo' action.");
+	} else {
+		int undoCount = static_cast<int>(std::distance(commandHistory_.begin(), commandHistoryItr_));
+		Novice::ScreenPrintf(20, 670, "WASD||arrow keys: move / space key: change selector mode / ctrl+z: undo");
+		Novice::ScreenPrintf(20, 690, "You have %d more 'UnDo' actions available.", undoCount);
+	}
+}
+
+bool StageScene::IsEnd() const { return inputHandler_->IsTriggerEscape(); }
 
 // Windowsアプリでのエントリーポイント(main関数)
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
@@ -220,97 +537,20 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// ライブラリの初期化
 	Novice::Initialize(kWindowTitle, 1280, 720);
 
-	// キー入力結果を受け取る箱
-	char keys[256] = {0};
-	char preKeys[256] = {0};
-
-	// 2Dテクスチャの読み込み
-	// ※環境によってフルパスが必要な場合は "C:/PG3_4/Novice/Resources/white1x1.png" に変更してください
-	int whiteTextureHandle = Novice::LoadTexture("white1x1.png");
-
-	// 弾の変数
-	Bullet bullet;
-
-	// 入力ハンドラの生成とコマンドの割り当て
-	InputHandler* inputHandler = new InputHandler();
-	inputHandler->AssignMoveUpCommand2PressKeyW();
-	inputHandler->AssignMoveDownCommand2PressKeyS();
-	inputHandler->AssignMoveLeftCommand2PressKeyA();
-	inputHandler->AssignMoveRightCommand2PressKeyD();
-	inputHandler->AssignShootCommand2PressKeySpace();
-
-	// 実行するコマンドのポインタ
-	ICommand* iCommand = nullptr;
-
-	// 自機の生成と初期化
-	Player* player = new Player(&bullet);
-	player->Init();
-
-	// 敵の変数
-	float enemyX = 640.0f;
-	float enemyY = 150.0f;
-	float enemyRadius = 25.0f;
-	float enemySpeed = 4.0f;
-	bool isEnemyAlive = true;
+	// ステージシーンの生成と初期化
+	StageScene* stageScene = new StageScene();
+	stageScene->Init();
 
 	// ウィンドウの×ボタンが押されるまでループ
 	while (Novice::ProcessMessage() == 0) {
 		// フレームの開始
 		Novice::BeginFrame();
 
-		// キー入力を受け取る
-		memcpy(preKeys, keys, 256);
-		Novice::GetHitKeyStateAll(keys);
-
 		///
 		/// ↓更新処理ここから
 		///
 
-		// 入力からコマンドを取得
-		iCommand = inputHandler->HandleInput();
-
-		// コマンドがある場合は対象コマンドを実行
-		if (iCommand) {
-			iCommand->Exec(*player);
-		}
-
-		// 自機の更新処理
-		player->Update();
-
-		// 弾の移動処理
-		if (bullet.isShot) {
-			bullet.y -= bullet.speed;
-			// 画面上端に出たら発射状態を解除
-			if (bullet.y < -bullet.radius) {
-				bullet.isShot = false;
-			}
-		}
-
-		// 敵の移動処理
-		if (isEnemyAlive) {
-			enemyX += enemySpeed;
-			// 画面端で反転
-			if (enemyX < enemyRadius || enemyX > 1280.0f - enemyRadius) {
-				enemySpeed = -enemySpeed;
-			}
-		} else {
-			// Rキーで敵を再出現
-			if (preKeys[DIK_R] == 0 && keys[DIK_R] != 0) {
-				isEnemyAlive = true;
-				enemyX = 640.0f;
-			}
-		}
-
-		// 弾と敵の当たり判定
-		if (bullet.isShot && isEnemyAlive) {
-			float dx = bullet.x - enemyX;
-			float dy = bullet.y - enemyY;
-			float distance = std::sqrtf(dx * dx + dy * dy);
-			if (distance <= bullet.radius + enemyRadius) {
-				bullet.isShot = false;
-				isEnemyAlive = false;
-			}
-		}
+		stageScene->Update();
 
 		///
 		/// ↑更新処理ここまで
@@ -320,22 +560,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓描画処理ここから
 		///
 
-		// 敵の描画（赤色）
-		if (isEnemyAlive) {
-			Novice::DrawSprite(static_cast<int>(enemyX - enemyRadius), static_cast<int>(enemyY - enemyRadius), whiteTextureHandle, enemyRadius * 2.0f, enemyRadius * 2.0f, 0.0f, RED);
-		}
-
-		// 弾の描画（黄色）
-		if (bullet.isShot) {
-			Novice::DrawSprite(
-			    static_cast<int>(bullet.x - bullet.radius), static_cast<int>(bullet.y - bullet.radius), whiteTextureHandle, bullet.radius * 2.0f, bullet.radius * 2.0f, 0.0f, 0xFFFF00FF);
-		}
-
-		// 自機の描画（白色）
-		player->Draw(whiteTextureHandle);
-
-		// 操作説明の描画
-		Novice::ScreenPrintf(20, 20, "WASD: Move / SPACE: Shot / R: Respawn Enemy");
+		stageScene->Draw();
 
 		///
 		/// ↑描画処理ここまで
@@ -345,14 +570,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Novice::EndFrame();
 
 		// ESCキーが押されたらループを抜ける
-		if (preKeys[DIK_ESCAPE] == 0 && keys[DIK_ESCAPE] != 0) {
+		if (stageScene->IsEnd()) {
 			break;
 		}
 	}
 
 	// 解放処理
-	delete player;
-	delete inputHandler;
+	delete stageScene;
 
 	// ライブラリの終了
 	Novice::Finalize();
