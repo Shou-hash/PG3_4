@@ -4,6 +4,13 @@
 
 const char kWindowTitle[] = "学籍番号";
 
+// シーン番号
+enum SCENE {
+	TITLE,
+	STAGE,
+	CLEAR,
+};
+
 // 弾の構造体
 struct Bullet {
 	float x = 0.0f;
@@ -65,7 +72,12 @@ private:
 // 自機クラス
 class Player {
 public:
-	Player(Bullet* bullet) : bullet_(bullet) {
+	Player(Bullet* bullet) : bullet_(bullet) { Init(); }
+
+	// 初期化処理
+	void Init() {
+		x_ = 640.0f;
+		y_ = 600.0f;
 		// 初期状態を「待機」に設定
 		ChangeState(std::make_unique<PlayerIdleState>());
 	}
@@ -207,6 +219,216 @@ void PlayerAttackState::Update(Player& player, const char* keys, const char*) {
 	}
 }
 
+// シーンの基底クラス
+class IScene {
+protected:
+	// シーン番号を管理する変数
+	static int sceneNo;
+
+public:
+	virtual ~IScene() = default;
+
+	// 初期化処理
+	virtual void Init() = 0;
+
+	// 更新処理
+	virtual void Update(const char* keys, const char* preKeys) = 0;
+
+	// 描画処理
+	virtual void Draw() = 0;
+
+	// シーン番号のゲッター
+	int GetSceneNo() const { return sceneNo; }
+};
+
+// 静的メンバ変数の実体化（初期シーンはタイトル）
+int IScene::sceneNo = TITLE;
+
+// タイトルシーンクラス
+class TitleScene : public IScene {
+public:
+	void Init() override {}
+
+	void Update(const char* keys, const char* preKeys) override {
+		// SPACEキーが押されたらステージシーンへ遷移
+		if (preKeys[DIK_SPACE] == 0 && keys[DIK_SPACE] != 0) {
+			sceneNo = STAGE;
+		}
+	}
+
+	void Draw() override {
+		// タイトル画面の描画
+		Novice::DrawBox(0, 0, 1280, 720, 0.0f, 0x1E293BFF, kFillModeSolid);
+		Novice::ScreenPrintf(570, 300, "SHOOTING GAME");
+		Novice::ScreenPrintf(540, 360, "Press SPACE to Start");
+	}
+};
+
+// ステージシーンクラス
+class StageScene : public IScene {
+public:
+	StageScene() {
+		// 2Dテクスチャの読み込み
+		// ※環境によってフルパスが必要な場合は "C:/PG3_4/Novice/Resources/white1x1.png" に変更してください
+		whiteTextureHandle_ = Novice::LoadTexture("white1x1.png");
+		player_ = std::make_unique<Player>(&bullet_);
+	}
+
+	void Init() override {
+		// 弾の初期化
+		bullet_ = Bullet();
+
+		// 自機の初期化
+		player_->Init();
+
+		// 敵の初期化
+		enemyX_ = 640.0f;
+		enemyY_ = 150.0f;
+		enemyRadius_ = 25.0f;
+		enemySpeed_ = 4.0f;
+		isEnemyAlive_ = true;
+	}
+
+	void Update(const char* keys, const char* preKeys) override {
+		// 自機の更新処理
+		player_->Update(keys, preKeys);
+
+		// 弾の移動処理
+		if (bullet_.isShot) {
+			bullet_.y -= bullet_.speed;
+			// 画面上端に出たら発射状態を解除
+			if (bullet_.y < -bullet_.radius) {
+				bullet_.isShot = false;
+			}
+		}
+
+		// 敵の移動処理
+		if (isEnemyAlive_) {
+			enemyX_ += enemySpeed_;
+			// 画面端で反転
+			if (enemyX_ < enemyRadius_ || enemyX_ > 1280.0f - enemyRadius_) {
+				enemySpeed_ = -enemySpeed_;
+			}
+		}
+
+		// 弾と敵の当たり判定
+		if (bullet_.isShot && isEnemyAlive_) {
+			float dx = bullet_.x - enemyX_;
+			float dy = bullet_.y - enemyY_;
+			float distance = std::sqrtf(dx * dx + dy * dy);
+			if (distance <= bullet_.radius + enemyRadius_) {
+				bullet_.isShot = false;
+				isEnemyAlive_ = false;
+			}
+		}
+
+		// 敵を撃破したらクリアシーンへ遷移
+		if (!isEnemyAlive_) {
+			sceneNo = CLEAR;
+		}
+	}
+
+	void Draw() override {
+		// 敵の描画（赤色）
+		if (isEnemyAlive_) {
+			Novice::DrawSprite(static_cast<int>(enemyX_ - enemyRadius_), static_cast<int>(enemyY_ - enemyRadius_), whiteTextureHandle_, enemyRadius_ * 2.0f, enemyRadius_ * 2.0f, 0.0f, RED);
+		}
+
+		// 弾の描画（黄色）
+		if (bullet_.isShot) {
+			Novice::DrawSprite(
+			    static_cast<int>(bullet_.x - bullet_.radius), static_cast<int>(bullet_.y - bullet_.radius), whiteTextureHandle_, bullet_.radius * 2.0f, bullet_.radius * 2.0f, 0.0f, 0xFFFF00FF);
+		}
+
+		// 自機の描画
+		player_->Draw(whiteTextureHandle_);
+
+		// 操作説明と現在の状態の描画
+		Novice::ScreenPrintf(20, 20, "WASD: Move / SPACE: Shot");
+		Novice::ScreenPrintf(20, 40, "Player State: %s", player_->GetStateName());
+	}
+
+private:
+	int whiteTextureHandle_ = 0;
+
+	// 弾の変数
+	Bullet bullet_;
+
+	// 自機
+	std::unique_ptr<Player> player_;
+
+	// 敵の変数
+	float enemyX_ = 640.0f;
+	float enemyY_ = 150.0f;
+	float enemyRadius_ = 25.0f;
+	float enemySpeed_ = 4.0f;
+	bool isEnemyAlive_ = true;
+};
+
+// クリアシーンクラス
+class ClearScene : public IScene {
+public:
+	void Init() override {}
+
+	void Update(const char* keys, const char* preKeys) override {
+		// SPACEキーが押されたらタイトルシーンへ遷移
+		if (preKeys[DIK_SPACE] == 0 && keys[DIK_SPACE] != 0) {
+			sceneNo = TITLE;
+		}
+	}
+
+	void Draw() override {
+		// クリア画面の描画
+		Novice::DrawBox(0, 0, 1280, 720, 0.0f, 0x14532DFF, kFillModeSolid);
+		Novice::ScreenPrintf(580, 300, "GAME CLEAR!");
+		Novice::ScreenPrintf(540, 360, "Press SPACE to Title");
+	}
+};
+
+// ゲーム全体を管理するクラス
+class GameManager {
+private:
+	// シーンを保持するメンバ変数
+	std::unique_ptr<IScene> sceneArr_[3];
+
+	// どのステージを呼び出すかを管理する変数
+	int currentSceneNo_ = TITLE;
+	int prevSceneNo_ = TITLE;
+
+public:
+	GameManager() {
+		// 各シーンの配列を設定
+		sceneArr_[TITLE] = std::make_unique<TitleScene>();
+		sceneArr_[STAGE] = std::make_unique<StageScene>();
+		sceneArr_[CLEAR] = std::make_unique<ClearScene>();
+
+		// 初期シーンの設定と初期化
+		currentSceneNo_ = TITLE;
+		sceneArr_[currentSceneNo_]->Init();
+	}
+
+	// 更新処理
+	void Update(const char* keys, const char* preKeys) {
+		// シーンのチェック
+		prevSceneNo_ = currentSceneNo_;
+		currentSceneNo_ = sceneArr_[currentSceneNo_]->GetSceneNo();
+
+		// シーン変更固有の初期化
+		if (prevSceneNo_ != currentSceneNo_) {
+			sceneArr_[currentSceneNo_]->Init();
+		}
+
+		// 現在のシーンの更新処理
+		sceneArr_[currentSceneNo_]->Update(keys, preKeys);
+	}
+
+	// 描画処理
+	void Draw() {
+		// 現在のシーンの描画処理
+		sceneArr_[currentSceneNo_]->Draw();
+	}
+};
+
 // Windowsアプリでのエントリーポイント(main関数)
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -217,22 +439,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	char keys[256] = {0};
 	char preKeys[256] = {0};
 
-	// 2Dテクスチャの読み込み
-	// ※環境によってフルパスが必要な場合は "C:/PG3_4/Novice/Resources/white1x1.png" に変更してください
-	int whiteTextureHandle = Novice::LoadTexture("white1x1.png");
-
-	// 弾の変数
-	Bullet bullet;
-
-	// 自機の生成
-	Player player(&bullet);
-
-	// 敵の変数
-	float enemyX = 640.0f;
-	float enemyY = 150.0f;
-	float enemyRadius = 25.0f;
-	float enemySpeed = 4.0f;
-	bool isEnemyAlive = true;
+	// ゲームマネージャーの生成
+	std::unique_ptr<GameManager> gameManager = std::make_unique<GameManager>();
 
 	// ウィンドウの×ボタンが押されるまでループ
 	while (Novice::ProcessMessage() == 0) {
@@ -247,43 +455,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// 自機の更新処理
-		player.Update(keys, preKeys);
-
-		// 弾の移動処理
-		if (bullet.isShot) {
-			bullet.y -= bullet.speed;
-			// 画面上端に出たら発射状態を解除
-			if (bullet.y < -bullet.radius) {
-				bullet.isShot = false;
-			}
-		}
-
-		// 敵の移動処理
-		if (isEnemyAlive) {
-			enemyX += enemySpeed;
-			// 画面端で反転
-			if (enemyX < enemyRadius || enemyX > 1280.0f - enemyRadius) {
-				enemySpeed = -enemySpeed;
-			}
-		} else {
-			// Rキーで敵を再出現
-			if (preKeys[DIK_R] == 0 && keys[DIK_R] != 0) {
-				isEnemyAlive = true;
-				enemyX = 640.0f;
-			}
-		}
-
-		// 弾と敵の当たり判定
-		if (bullet.isShot && isEnemyAlive) {
-			float dx = bullet.x - enemyX;
-			float dy = bullet.y - enemyY;
-			float distance = std::sqrtf(dx * dx + dy * dy);
-			if (distance <= bullet.radius + enemyRadius) {
-				bullet.isShot = false;
-				isEnemyAlive = false;
-			}
-		}
+		// ゲームマネージャーの更新処理
+		gameManager->Update(keys, preKeys);
 
 		///
 		/// ↑更新処理ここまで
@@ -293,23 +466,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓描画処理ここから
 		///
 
-		// 敵の描画（赤色）
-		if (isEnemyAlive) {
-			Novice::DrawSprite(static_cast<int>(enemyX - enemyRadius), static_cast<int>(enemyY - enemyRadius), whiteTextureHandle, enemyRadius * 2.0f, enemyRadius * 2.0f, 0.0f, RED);
-		}
-
-		// 弾の描画（黄色）
-		if (bullet.isShot) {
-			Novice::DrawSprite(
-			    static_cast<int>(bullet.x - bullet.radius), static_cast<int>(bullet.y - bullet.radius), whiteTextureHandle, bullet.radius * 2.0f, bullet.radius * 2.0f, 0.0f, 0xFFFF00FF);
-		}
-
-		// 自機の描画
-		player.Draw(whiteTextureHandle);
-
-		// 操作説明と現在の状態の描画
-		Novice::ScreenPrintf(20, 20, "WASD: Move / SPACE: Shot / R: Respawn Enemy");
-		Novice::ScreenPrintf(20, 40, "Player State: %s", player.GetStateName());
+		// ゲームマネージャーの描画処理
+		gameManager->Draw();
 
 		///
 		/// ↑描画処理ここまで
